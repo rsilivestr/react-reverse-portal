@@ -155,113 +155,53 @@ interface InPortalProps {
     children: React.ReactNode;
 }
 
-class InPortal extends React.PureComponent<InPortalProps, { nodeProps: {} }> {
-
-    constructor(props: InPortalProps) {
-        super(props);
-        this.state = {
-            nodeProps: this.props.node.getInitialPortalProps(),
-        };
-    }
-
-    addPropsChannel = () => {
-        Object.assign(this.props.node, {
+function InPortal({ children, node }: InPortalProps) {
+    const [nodeProps, setNodeProps] = React.useState(node.getInitialPortalProps());
+    React.useLayoutEffect(() => {
+        Object.assign(node, {
             setPortalProps: (props: {}) => {
                 // Rerender the child node here if/when the out portal props change
-                this.setState({ nodeProps: props });
+                setNodeProps(props);
             }
         });
-    };
-
-    componentDidMount() {
-        this.addPropsChannel();
-    }
-
-    componentDidUpdate() {
-        this.addPropsChannel();
-    }
-
-    render() {
-        const { children, node } = this.props;
-
-        return ReactDOM.createPortal(
-            React.Children.map(children, (child) => {
-                if (!React.isValidElement(child)) return child;
-                return React.cloneElement(child, this.state.nodeProps)
-            }),
-            node.element
-        );
-    }
+    }, [node]);
+    return ReactDOM.createPortal(
+        React.Children.map(children, (child) => {
+            if (!React.isValidElement(child)) return child;
+            return React.cloneElement(child, nodeProps)
+        }),
+        node.element
+    );
 }
 
 type OutPortalProps<C extends Component<any>> = {
     node: AnyPortalNode<C>
 } & Partial<ComponentProps<C>>;
 
-class OutPortal<C extends Component<any>> extends React.PureComponent<OutPortalProps<C>> {
-
-    private placeholderNode = React.createRef<HTMLElement>();
-    private currentPortalNode?: AnyPortalNode<C>;
-
-    constructor(props: OutPortalProps<C>) {
-        super(props);
-        this.passPropsThroughPortal();
-    }
-
-    passPropsThroughPortal() {
-        const propsForTarget = Object.assign({}, this.props, { node: undefined });
-        this.props.node.setPortalProps(propsForTarget);
-    }
-
-    componentDidMount() {
-        const node = this.props.node as AnyPortalNode<C>;
-        this.currentPortalNode = node;
-
-        const placeholder = this.placeholderNode.current!;
-        const parent = placeholder.parentNode!;
-        node.mount(parent, placeholder);
-        this.passPropsThroughPortal();
-    }
-
-    componentDidUpdate() {
-        // We re-mount on update, just in case we were unmounted (e.g. by
-        // a second OutPortal, which has now been removed)
-        const node = this.props.node as AnyPortalNode<C>;
-
-        // If we're switching portal nodes, we need to clean up the current one first.
-        if (this.currentPortalNode && node !== this.currentPortalNode) {
-            this.currentPortalNode.unmount(this.placeholderNode.current!);
-            this.currentPortalNode.setPortalProps({} as ComponentProps<C>);
-            this.currentPortalNode = node;
-        }
-
-        const placeholder = this.placeholderNode.current!;
-        const parent = placeholder.parentNode!;
-        node.mount(parent, placeholder);
-        this.passPropsThroughPortal();
-    }
-
-    componentWillUnmount() {
-        const node = this.props.node as AnyPortalNode<C>;
-        node.unmount(this.placeholderNode.current!);
-        node.setPortalProps({} as ComponentProps<C>);
-    }
-
-    render() {
-        // Render a placeholder to the DOM, so we can get a reference into
-        // our location in the DOM, and swap it out for the portaled node.
-        const tagName = this.props.node.element.tagName;
-
-        // SVG tagName is lowercase and case sensitive, HTML is uppercase and case insensitive.
-        // React.createElement expects lowercase first letter to treat as non-component element.
-        // (Passing uppercase type won't break anything, but React warns otherwise:)
-        // https://github.com/facebook/react/blob/8039f1b2a05d00437cd29707761aeae098c80adc/CHANGELOG.md?plain=1#L1984
-        const type = this.props.node.elementType === ELEMENT_TYPE_HTML
-            ? tagName.toLowerCase()
-            : tagName;
-
-        return React.createElement(type, { ref: this.placeholderNode });
-    }
+function OutPortal<C extends Component<any>>({ node, ...propsToPass }: OutPortalProps<C>) {
+    // Render a placeholder to the DOM, so we can get a reference into
+    // our location in the DOM, and swap it out for the portaled node.
+    const placeholderRef = React.useRef<HTMLElement>(null!)
+    // SVG tagName is lowercase and case sensitive, HTML is uppercase and case insensitive.
+    // React.createElement expects lowercase first letter to treat as non-component element.
+    // (Passing uppercase type won't break anything, but React warns otherwise:)
+    // https://github.com/facebook/react/blob/8039f1b2a05d00437cd29707761aeae098c80adc/CHANGELOG.md?plain=1#L1984
+    const placeholderType = node.elementType === ELEMENT_TYPE_HTML
+        ? node.element.tagName.toLowerCase()
+        : node.element.tagName;
+    // Using layout effect to get proper placeholder ref on first render.
+    React.useLayoutEffect(() => {
+        const placeholder = placeholderRef.current;
+        node.mount(placeholder.parentNode!, placeholder);
+        node.setPortalProps(propsToPass as ComponentProps<C>);
+        return () => {
+            node.unmount(placeholder);
+            node.setPortalProps({} as ComponentProps<C>);
+        };
+    }, [node]);
+    return React.createElement(placeholderType, {
+        ref: placeholderRef
+    });
 }
 
 const createHtmlPortalNode = createPortalNode.bind(null, ELEMENT_TYPE_HTML) as
